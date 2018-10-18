@@ -5,5 +5,5 @@ Code for image restoration assignment, takes four arguments
 3) output file name
 4) method name (fullinv,truncinv,weiner,ls)
 
-Link to video is incorrect in report - here is the correct link :
-https://drive.google.com/open?id=1rJriIPe2Ado5KB2USbWRriSLeuANRGKw
+Link to video :
+https://drive.google.com/open?id=1pWCbQ-4o4LQ0rarOreozabhGI8doQPfO
