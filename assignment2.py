@@ -1,10 +1,11 @@
-import numpy as np
-import argparse
-from PIL import Image , ImageTk, ImageCms
-from scipy import ndimage, signal
-from skimage.measure import structural_similarity as ssim
+import numpy as np #for array calculations
+import argparse #for terminal argument input
+from PIL import Image , ImageTk, ImageCms # image manipulation
+from scipy import ndimage, signal 
+from skimage.measure import compare_ssim as ssim #ssim calculations
 import math
-from skimage import restoration
+from skimage import restoration #to compare my code with module
+import cv2 #image manipulation
 ## calculating psnr taken from internet from this repo - https://github.com/aizvorski/video-quality
 def psnr(img1, img2):
 	mse = np.mean( (img1 - img2) ** 2 )
@@ -12,6 +13,7 @@ def psnr(img1, img2):
 		return 100
 	PIXEL_MAX = 255.0
 	return 20 * math.log10(PIXEL_MAX / math.sqrt(mse))
+
 # ## Compute DFT function written by me
 def dft2(img):
 	# find shape of array, store them in M,N
@@ -51,116 +53,134 @@ def idft2(img):
 
 ##all of the following written by me, ssim from skimage module is used
 ##function to calculate full inverse
-def fullinverse(imgarr,kernelarr,optsize0,optsize1):
-	# idftimg_all = []
-	# for band in range(3):
-	imgarr = np.pad(imgarr,((0,optsize0-imgarr.shape[0]),(0,optsize1-imgarr.shape[1])),'constant')#pad image to optimum size
-	dftimg = np.array(dft2(imgarr))#dft of image
+def fullinverse(imgarr,kernelarr):
+	pilimg_all = []
+	newimg_all = imgarr
 	dftkernel = dft2(kernelarr)#dft of kernel
 	multfactor = 1/dftkernel #1/dft(kernel)
-	dftprod = dftimg*multfactor #element wise multiplication of dft
-	idftimg = idft2(dftprod)*2000 # computing inverse dft of final image dft and scaling intensities by 2000 because they are very low
-	bf = Image.fromarray(idftimg.real.astype('uint8'),'L') #image object from numpy array
-	return bf,np.array(idftimg.real.astype('uint8'))
+	for band in range(3): #loop over RGB
+		dftimg = np.array(dft2(imgarr[:,:,band]))#dft of image
+		dftprod = dftimg*multfactor #element wise multiplication of dft
+		idftimg = idft2(dftprod).real.astype('uint8') # computing inverse dft of final image dft
+		bf = Image.fromarray(idftimg).convert('L') #image object from numpy array
+		newimg_all[:,:,band] = idftimg
+		pilimg_all.append(bf)
+	finalimg = Image.merge("RGB",(pilimg_all[0],pilimg_all[1],pilimg_all[2]))#merge to RGB
+	return finalimg,newimg_all
 
-def truncinverse(imgarr,kernelarr,optsize0,optsize1):
+def truncinverse(imgarr,kernelarr):
 	radius = int(raw_input("Please enter truncation radius : ")) #take user input for radius
-	# idftimg_all = []
-	# for band in range(3):
-	imgarr = np.pad(imgarr,((0,optsize0-imgarr.shape[0]),(0,optsize1-imgarr.shape[1])),'constant')#pad image to optimum size
 	modkernel = kernelarr[0:radius,0:radius] # truncate kernel
-	dftimg = np.array(dft2(imgarr))#dft of image
+	pilimg_all = []
+	newimg_all = imgarr
 	dftkernel = dft2(modkernel)#dft of truncated kernel
-	multfactor = np.conj(dftkernel)/(np.abs(dftkernel)**2) #compute wiener filter
-	dftprod = dftimg
-	dftprod[0:radius,0:radius] = dftimg[0:radius,0:radius]*multfactor#element wise multiplication of dft radially limited
-	idftimg = idft2(dftprod) # computing inverse dft of final image dft 
-	bf = Image.fromarray(idftimg.real.astype('uint8'),'L')#image object from numpy array
-	return bf,np.array(idftimg.real.astype('uint8'))	
+	multfactor = 1./dftkernel
+	multfactor[np.where(np.abs(multfactor)>=0.71)] = 0.71+0j #thresholding
+	for band in range(3):#loop over RGB
+		dftimg = np.array(dft2(imgarr[:,:,band]))#dft of image
+		dftprod = dftimg
+		dftprod[0:radius,0:radius] = dftimg[0:radius,0:radius]*multfactor#element wise multiplication of dft radially limited	
+		idftimg = idft2(dftprod).real.astype('uint8') # computing inverse dft of final image dft
+		bf = Image.fromarray(idftimg).convert('L') #image object from numpy array
+		newimg_all[:,:,band] = idftimg
+		pilimg_all.append(bf)
+	finalimg = Image.merge("RGB",(pilimg_all[0],pilimg_all[1],pilimg_all[2]))#merge to RGB
+	return finalimg,newimg_all
 
-def weinerinverse(imgarr,kernelarr,optsize0,optsize1):
+def weinerinverse(imgarr,kernelarr):
 	K = float(raw_input("Please enter K value for weiner filtering : "))#take user input for K
-	# idftimg_all = []
-	# for band in range(3):
-	imgarr = np.pad(imgarr,((0,optsize0-imgarr.shape[0]),(0,optsize1-imgarr.shape[1])),'constant')#pad image to optimum size
-	dftimg = np.array(dft2(imgarr))#dft of image
+	pilimg_all = []
+	newimg_all = imgarr
 	dftkernel = np.array(dft2(kernelarr))#dft of kernel
-	multfactor = np.conj(dftkernel)/(np.abs(dftkernel)**2 + K)
-	dftprod = dftimg*multfactor#element wise multiplication of dft
-	idftimg = idft2(dftprod)*2000 # computing inverse dft of final image dft and scaling intensities by 2000 because they are very low
-	#idftimg = restoration.wiener(imgarr, kernelarr, 100)*1000 ##checked using skimage wiener filter, gives same result of too low intensities
-	bf = Image.fromarray(idftimg.real.astype('uint8'),'L')#image object from numpy array
-	return bf,np.array(idftimg.real.astype('uint8'))
+	multfactor = np.conj(dftkernel)/(np.abs(dftkernel)**2 + K)  #compute wiener filter
+	for band in range(3):#loop over RGB
+		dftimg = np.array(dft2(imgarr[:,:,band]))#dft of image
+		dftprod = dftimg*multfactor #element wise multiplication of dft
+		idftimg = idft2(dftprod).real.astype('uint8') # computing inverse dft of final image dft
+		bf = Image.fromarray(idftimg).convert('L') #image object from numpy array
+		newimg_all[:,:,band] = idftimg
+		pilimg_all.append(bf)
+	finalimg = Image.merge("RGB",(pilimg_all[0],pilimg_all[1],pilimg_all[2]))#merge to RGB
+	return finalimg,newimg_all
 
-def constrainedls(imgarr,kernelarr,optsize0,optsize1):
+def constrainedls(imgarr,kernelarr):
 	gamma = float(raw_input("Please enter gamma value for constrained ls filtering : "))#take user input for gamma
+	pilimg_all = []
+	newimg_all = imgarr
 	p = np.array([[0,-1,0],[-1,4,-1],[0,-1,0]]) ##laplacian matrix
-	P = np.pad(p,((0,optsize0-p.shape[0]),(0,optsize1-p.shape[1])),'constant') ##padded laplacian to optimum size
-	imgarr = np.pad(imgarr,((0,optsize0-imgarr.shape[0]),(0,optsize1-imgarr.shape[1])),'constant')#pad image to optimum size
-	dftimg = np.array(dft2(imgarr))#dft of image
+	P = np.pad(p,((0,imgarr.shape[0]-p.shape[0]),(0,imgarr.shape[1]-p.shape[1])),'constant') ##padded laplacian to optimum size
 	dftkernel = np.array(dft2(kernelarr))#dft of kernel
 	dftp = np.array(dft2(P))#dft of laplacian
 	multfactor = np.conj(dftkernel)/(np.abs(dftkernel)**2 + gamma*(np.abs(dftp)**2)) #constrained ls filter
-	dftprod = dftimg*multfactor#element wise multiplication of dft
-	idftimg = idft2(dftprod)*2000 # computing inverse dft of final image dft and scaling intensities by 2000 because they are very low
-	bf = Image.fromarray(idftimg.real.astype('uint8'),'L')#image object from numpy array
-	return bf,np.array(idftimg.real.astype('uint8'))
+	for band in range(3):#loop over RGB
+		dftimg = np.array(dft2(imgarr[:,:,band]))#dft of image
+		dftprod = dftimg*multfactor #element wise multiplication of dft
+		idftimg = idft2(dftprod).real.astype('uint8') # computing inverse dft of final image dft
+		bf = Image.fromarray(idftimg).convert('L') #image object from numpy array
+		newimg_all[:,:,band] = idftimg
+		pilimg_all.append(bf)
+	finalimg = Image.merge("RGB",(pilimg_all[0],pilimg_all[1],pilimg_all[2]))#merge to RGB
+	return finalimg,newimg_all
 
 ## Command line argument parser to take image file name, kernel file name and output file name
 parser = argparse.ArgumentParser()
 parser.add_argument('blurred_image',help = "blurred image file name")
 parser.add_argument('blur_kernel', help= "blurring kernel file name",default='')
-parser.add_argument('outfile', help="output file name")
-parser.add_argument('method', help="choose deblurring method", choices=['fullinv','truncinv','weiner','ls'])
+parser.add_argument('outfile', help="output file name",default='out')
+parser.add_argument('method', help="choose deblurring method", choices=['fullinv','truncinv','weiner','ls','blind'],default='weiner')
 args = parser.parse_args()
 ## Load image blurred
 img = Image.open(args.blurred_image)
-#load ground truth image
-ground = Image.open('GroundTruth1_1_1.jpg').convert('HSV')
-ground2 = list(ground.getdata(band=2))
-ground2 = np.array(ground2).reshape(ground.size[1],ground.size[0]).astype('uint8')
-img = img.convert('HSV') ##convert to HSV
-#img.show()
-data = list(img.getdata(band=2)) #get V data
-imgarr = np.array(data).reshape(img.size[1],img.size[0]).astype('uint8')#convert image object to array
-#Image.fromarray(ground2).show()
-ssim0 = ssim(ground2,imgarr)#ssim of blurred image
-psnr0 = psnr(ground2,imgarr)#psnr of blurred image
-if(args.blur_kernel!=''):
+imgarr = np.array(img.getdata()).reshape(img.size[1],img.size[0],3)
+if(args.method != 'blind'):
+	#load ground truth image
+	ground = Image.open('GroundTruth1_1_1.jpg')
+	groundarr = np.array(ground.getdata()).reshape(ground.size[1],ground.size[0],3)
+	#load kernel image
 	kernel = Image.open(args.blur_kernel) # open kernel image
-	kernel_data = list(kernel.getdata(band=0)) # get kernel image data
-	kernelarr = np.array(kernel_data).reshape(kernel.size[1],kernel.size[0]) #reshape to numpy array
-	## compute optimum size for padding for DFT calculation
-	optsize1 = img.size[0]+kernel.size[0]+2 
-	optsize0 = img.size[1]+kernel.size[1]+2
-	kernelarr = np.pad(kernelarr,((0,optsize0-kernelarr.shape[0]),(0,optsize1-kernelarr.shape[1])),'constant') # pad kernel
-	ground2 = np.pad(ground2,((0,optsize0-ground2.shape[0]),(0,optsize1-ground2.shape[1])),'constant')# pad ground truth
+	kernelarr = np.array(kernel.getdata()).reshape(kernel.size[1],kernel.size[0]) # get kernel image data
+	kernelarr = kernelarr / (np.linalg.norm(kernelarr)**2) * 255. #normalize kernel
+	kernelarr2 = np.pad(kernelarr,((0,imgarr.shape[0]-kernelarr.shape[0]),(0,imgarr.shape[1]-kernelarr.shape[1])),'constant') # pad kernel
+	ground2 = np.zeros((829,829,3)).astype('uint8')
+	for i in range(3):
+		ground2[:,:,i] = np.pad(groundarr[:,:,i],((0,imgarr.shape[0]-groundarr.shape[0]),(0,imgarr.shape[1]-groundarr.shape[1])),'constant')# pad ground truth
+
+	ssim_blur = ssim(ground2,imgarr.astype('uint8'),multichannel=True)#ssim of blur image
+	psnr_blur = psnr(ground2,imgarr.astype('uint8'))#psnr of blur image
+
 	## if else conditions to call required method and calculate ssim and psnr of restored image
 	if(args.method == 'fullinv'):
-		bf,newimg = fullinverse(imgarr,kernelarr,optsize0,optsize1)
-		ssim1 = ssim(ground2,newimg)
-		psnr1 = psnr(ground2,newimg)
+		bf,newimg = fullinverse(imgarr,kernelarr2)
 	elif(args.method == 'truncinv'):
-		bf,newimg = truncinverse(imgarr,kernelarr,optsize0,optsize1)
-		ssim1 = ssim(ground2,newimg)
-		psnr1 = psnr(ground2,newimg)
+		bf,newimg = truncinverse(imgarr,kernelarr2)
 	elif(args.method == 'weiner'):
-		bf,newimg = weinerinverse(imgarr,kernelarr,optsize0,optsize1)
-		ssim1 = ssim(ground2,newimg)
-		psnr1 = psnr(ground2,newimg)
+		bf,newimg = weinerinverse(imgarr,kernelarr2)
 	elif(args.method == 'ls'):
-		bf,newimg = constrainedls(imgarr,kernelarr,optsize0,optsize1)
-		ssim1 = ssim(ground2,newimg)
-		psnr1 = psnr(ground2,newimg)
+		bf,newimg = constrainedls(imgarr,kernelarr2)
+
+	ssim_restored = ssim(ground2,newimg.astype('uint8'),multichannel=True)#ssim of restored image
+	psnr_restored = psnr(ground2,newimg.astype('uint8'))#psnr of restored image
+
 	bf.show()#show restored image
 	bf.save(args.outfile,'PNG')#save restored image
-	print ssim1, psnr1, ssim0, psnr0##print ssimand psnr
-#else:
-	##estimate kernel apply weiner
-
-
-
-
-
-
-
+	print ssim_blur, psnr_blur
+	print ssim_restored, psnr_restored ##print ssim and psnr
+else: #for blind deblurring
+	image = cv2.imread(args.blurred_image)#load image using cv2
+	gray = np.array(cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)) #change RGB to gray
+	kernel = cv2.imread(args.blur_kernel)#load assumed kernel image
+	kernel = np.array(cv2.cvtColor(kernel, cv2.COLOR_BGR2GRAY))# RGB to gray
+	kernelarr = kernel / (np.linalg.norm(kernel)**2) * 255. #normalize kernel
+	kernelarr = np.pad(kernelarr,((0,gray.shape[0]-kernelarr.shape[0]),(0,gray.shape[1]-kernelarr.shape[1])),'constant') # pad kernel
+	gamma = float(raw_input("Enter gamma value : "))#get gamma value from user
+	p = np.array([[0,-1,0],[-1,4,-1],[0,-1,0]]) ##laplacian matrix
+	P = np.pad(p,((0,gray.shape[0]-p.shape[0]),(0,gray.shape[1]-p.shape[1])),'constant') ##padded laplacian to optimum size
+	dftkernel = np.array(dft2(kernelarr))#dft of kernel
+	dftp = np.array(dft2(P))#dft of laplacian
+	multfactor = np.conj(dftkernel)/(np.abs(dftkernel)**2 + gamma*(np.abs(dftp)**2)) #constrained ls filter
+	dftimg = np.array(dft2(gray))#dft of image
+	dftprod = dftimg*multfactor #element wise multiplication of dft
+	idftimg = np.array(idft2(dftprod).real.astype('uint8')) # computing inverse dft of final image dft
+	bf = Image.fromarray(idftimg).convert('L') #image object from numpy array
+	bf.show()#show image
+	bf.save('restored_new.png')#save image
